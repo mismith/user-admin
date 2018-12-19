@@ -256,6 +256,34 @@
     const wait = (ms = 1500) => new Promise(resolve => setTimeout(resolve, ms)); // @TODO
     const { appname = 'default' } = window.tinyQuerystring.parse(window.location.search.substring(1));
 
+    class Api {
+      constructor(baseURL = '', baseConfig = {}) {
+        this.baseURL = baseURL;
+        this.baseConfig = baseConfig;
+      }
+
+      async call(path, config) {
+        try {
+          const response = await axios(`${this.baseURL}${path}`, {
+            ...this.baseConfig,
+            ...config,
+          });
+
+          return response.data;
+        } catch (err) {
+          if (err && err.response && err.response.data && err.response.data.error) {
+            const error = new Error(err.response.data.error);
+            error.code = err.response.status;
+            throw error;
+          }
+          throw err;
+        }
+      }
+    }
+    const api = new Api('http://api.test.renoworks.com', {
+      withCredentials: true,
+    });
+
     class Auth {
       constructor() {
         this.me = undefined;
@@ -307,7 +335,68 @@
         return this.me;
       }
     }
-    const auth = new Auth();
+    class SurfacesAuth extends Auth {
+      constructor() {
+        super();
+
+        this.me = undefined;
+
+        this.init();
+      }
+
+      async init() {
+        if (!this.me) {
+          this.me = this.fromRecord(await api.call(`/users/session?site=${appname}`));
+        }
+
+        return this.me;
+      }
+      async login(email, password) {
+        this.me = this.fromRecord(await api.call('/users/session', {
+          method: 'PUT',
+          data: {
+            site: appname,
+            email,
+            password,
+          },
+        }));
+
+        return this.me;
+      }
+      async logout() {
+        this.me = this.fromRecord(await api.call(`/users/${this.me.id}?site=${appname}`, {
+          method: 'DELETE',
+        }));
+
+        return this.me;
+      }
+      async update(updates) {
+        this.me = this.fromRecord(await api.call(`/users/${this.me.id}`, {
+          method: 'PUT',
+          data: {
+            site: appname,
+            ...this.me,
+            ...updates,
+          },
+        }));
+
+        return this.me;
+      }
+
+      // toRecord(data = {}) {
+      //   // @TODO
+      //   return data;
+      // }
+      fromRecord(record = {}) {
+        if (record) {
+          const { JSESSIONID, ...user } = record;
+
+          return user;
+        }
+        return null;
+      }
+    }
+    const auth = new SurfacesAuth();
 
     class Users {
       constructor() {
@@ -400,7 +489,138 @@
         };
       }
     }
-    const usersCollection = new Users();
+    class SurfacesUsers extends Users {
+      constructor() {
+        super();
+
+        this.fields = [
+          {
+            name: 'id',
+            readonly: true,
+          },
+          {
+            name: 'email',
+            type: 'email',
+          },
+          // {
+          //   name: 'data',
+          //   is: 'v-textarea',
+          //   'auto-grow': true
+          // },
+          {
+            name: 'companyName',
+          },
+          {
+            name: 'firstName',
+          },
+          {
+            name: 'lastName',
+          },
+          {
+            name: 'phone1',
+            type: 'tel',
+          },
+          {
+            name: 'zip',
+          },
+          {
+            name: 'state_abbr',
+          },
+          {
+            name: 'contact',
+            is: 'v-checkbox',
+          },
+          {
+            name: 'level',
+            type: 'number',
+            readonly: true,
+          },
+        ];
+      }
+
+      async read() {
+        const me = await auth.init();
+        const { children } = await api.call(`/users/${me.id}/children?site=${appname}`);
+
+        this.users = children.map(user => this.fromRecord(user));
+
+        return this.users;
+      }
+
+      async create(usersToCreate) {
+        const me = await auth.init();
+        const created = await Promise.all(usersToCreate.map(async (user) => {
+          return api.call('/users', {
+            method: 'POST',
+            data: {
+              password: '', // @TODO
+              parent_id: me.id, // @TODO
+              ...this.toRecord(user),
+            },
+          });
+        }));
+
+        this.users.push(...created.map(user => this.fromRecord(user))); // modify locally
+
+        return this.users;
+      }
+
+      // async update(usersToUpdate, updates) {
+      //   await Promise.all(usersToUpdate.map(async (user) => {
+      //     const userToUpdate = this.users.find(u => u.id === user.id);
+      //     if (userToUpdate) {
+      //       const updated = await api.call(`/users/${userToUpdate.id}`, {
+      //         method: 'PUT',
+      //         data: {
+      //           site: appname,
+      //           ...userToUpdate,
+      //           ...updates,
+      //         },
+      //       });
+      //       Object.assign(user, this.fromRecord(updated)); // modify locally
+      //     }
+      //   }));
+
+      //   return this.users;
+      // }
+
+      // async delete(usersToDelete) {
+      //   await Promise.all(usersToDelete.map(async (user) => {
+      //     const index = this.users.indexOf(user);
+      //     if (index >= 0) {
+      //       await api.call(`/users/${user.id}?site=${appname}`, {
+      //         method: 'DELETE',
+      //       });
+      //       this.users.splice(index, 1); // modify locally
+      //     }
+      //   }));
+
+      //   return this.users;
+      // }
+
+      fromRecord(record = {}) {
+        const { data, ...user } = record;
+
+        return {
+          ...this.defaults,
+          ...JSON.parse(data || '{}'),
+          ...user,
+        };
+      }
+      toRecord(user = {}) {
+        const { id, email, contact, level, ...data } = user;
+
+        return {
+          site: appname,
+          id,
+          email,
+          data: JSON.stringify(data),
+          contact,
+          level,
+        };
+      }
+    }
+    const usersCollection = new SurfacesUsers();
 
     const store = new Vuex.Store({
       state: {
