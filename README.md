@@ -2,8 +2,7 @@
 
 Barebones but extensible user admin panel
 
-
-## Usage
+## Usage: [Demo](https://mismith.github.io/user-admin/)
 
 1. Open `index.html` in a web browser (it will even work if served from the file system)
 2. Login (using email `test@test.com` and password `testing`, by default)
