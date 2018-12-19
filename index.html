@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, minimal-ui" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900|Material+Icons" />
+  <link rel="stylesheet" href="https://unpkg.com/vuetify/dist/vuetify.min.css" />
+  <title>User Admin</title>
+  <style>
+    .auth {
+      width: 100%;
+      max-width: 300px;
+    }
+
+    .user-list {
+      overflow: hidden;
+    }
+    .user-list .card-title-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      min-height: 68px;
+    }
+
+    .user-item .layout.column {
+      min-height: 100%;
+    }
+    .user-item .layout.column > * {
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <template id="app-template">
+    <v-app id="app">
+      <v-toolbar color="primary" dark app>
+        <v-toolbar-title>User Admin</v-toolbar-title>
+
+        <v-menu v-if="me" bottom left class="ml-auto">
+          <v-btn slot="activator" light>
+            {{ me.email }}
+            <v-icon>arrow_drop_down</v-icon>
+          </v-btn>
+
+          <v-list>
+            <v-list-tile @click="handleMyAccount">
+              <span class="mr-auto">My Account</span>
+              <v-icon>person</v-icon>
+            </v-list-tile>
+            <v-list-tile @click="logout">
+              <span class="mr-auto">Logout</span>
+              <v-icon>power_settings_new</v-icon>
+            </v-list-tile>
+          </v-list>
+        </v-menu>
+      </v-toolbar>
+      <v-content id="content">
+        <v-container v-if="me" fluid>
+          <user-list></user-list>
+          <user-item></user-item>
+        </v-container>
+        <v-container v-else-if="me !== undefined" fill-height>
+          <auth></auth>
+        </v-container>
+        <v-container fill-height v-else>
+          <v-progress-circular :size="64" color="primary" indeterminate class="ma-auto"></v-progress-circular>
+        </v-container>
+      </v-content>
+    </v-app>
+  </template>
+
+  <template id="user-list-template">
+    <v-card class="user-list">
+      <v-card-title class="py-0">
+        <h2 class="headline mr-auto">Users</h2>
+
+        <v-text-field
+          type="search"
+          v-model="search"
+          append-icon="search"
+          label="Filter"
+          single-line
+          class="mr-3"
+          style="max-width: 200px;"
+        ></v-text-field>
+
+        <v-tooltip bottom>
+          <v-btn slot="activator" icon color="primary" @click="handleAdd">
+            <v-icon>add</v-icon>
+          </v-btn>
+          <span>Add User</span>
+        </v-tooltip>
+      </v-card-title>
+      <v-slide-y-transition>
+        <v-card-title v-show="count" class="card-title-overlay primary lighten-3 py-0">
+          <span class="mr-auto">
+            {{ count }} user{{ count === 1 ? '' : 's' }} selected
+          </span>
+
+          <v-tooltip bottom>
+            <v-dialog-confirm
+              slot="activator"
+              v-model="confirmDelete"
+              :title="`Delete ${ count === 1 ? '' : count } User${ count === 1 ? '' : 's' }`"
+              text="Are you sure?"
+              @confirm="handleDelete(selected)"
+            >
+              <v-btn icon slot="activator" :loading="isDeleting">
+                <v-icon>delete</v-icon>
+              </v-btn>
+            </v-dialog-confirm>
+            <span>Delete {{ count === 1 ? '' : count }} User{{ count === 1 ? '' : 's' }}</span>
+          </v-tooltip>
+
+          <v-tooltip bottom>
+            <v-btn slot="activator" icon @click="handleEdit(selected)">
+              <v-icon>edit</v-icon>
+            </v-btn>
+            <span>Edit {{ count === 1 ? '' : count }} User{{ count === 1 ? '' : 's' }}</span>
+          </v-tooltip>
+        </v-card-title>
+      </v-slide-y-transition>
+      <v-data-table
+        :items="users"
+        :headers="headers"
+        v-model="selected"
+        select-all
+        :search="search"
+        :rows-per-page-items="[10, 100, 1000]"
+        :loading="isLoadingUsers"
+        class="user-list"
+      >
+        <template slot="items" slot-scope="props">
+          <tr :active="props.selected" @click="handleEdit([props.item])" style="cursor: pointer;">
+            <td @click.stop>
+              <v-checkbox v-model="props.selected" primary hide-details></v-checkbox>
+            </td>
+            <td v-for="field in fields" :key="field.name">
+              {{ props.item[field.name] }}
+            </td>
+          </tr>
+        </template>
+      </v-data-table>
+    </v-data-table>
+  </template>
+
+  <template id="user-item-template">
+    <v-navigation-drawer v-model="isOpen" :stateless="isOpen" :width="400" temporary fixed right class="user-item">
+      <v-card tag="form" @submit.prevent="handleSave" class="layout column">
+        <v-card-title>
+          <h3 class="title">
+            {{ isAdding ? 'Add' : 'Edit' }} {{ count === 1 ? '' : count }} User{{ count === 1 ? '' : 's' }}
+          </h3>
+        </v-card-title>
+        <v-card-text>
+          <div
+            v-for="field in fields"
+            :key="field.name"
+            :is="field.is || 'v-text-field'"
+            v-bind="field"
+            v-model="data[field.name]"
+            :type="field.type || 'text'"
+            :label="field.label || field.name"
+            :required="isBatch ? false : field.required"
+            :readonly="field.readonly"
+            box
+          ></div>
+        </v-card-text>
+        <v-card-actions class="mt-auto">
+          <v-tooltip top class="mr-auto">
+            <v-dialog-confirm
+              slot="activator"
+              v-model="confirmDelete"
+              :title="`Delete ${ count === 1 ? '' : count } User${ count === 1 ? '' : 's' }`"
+              text="Are you sure?"
+              @confirm="handleDelete(users)"
+            >
+              <v-btn icon slot="activator" :loading="isDeleting">
+                <v-icon>delete</v-icon>
+              </v-btn>
+            </v-dialog-confirm>
+            <span>Delete {{ count === 1 ? '' : count }} User{{ count === 1 ? '' : 's' }}</span>
+          </v-tooltip>
+
+          <v-btn flat @click="isOpen = false">Cancel</v-btn>
+          <v-btn type="submit" color="primary" :loading="isSaving">
+            Save {{ isBatch ? 'All' : '' }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-navigation-drawer>
+  </template>
+
+  <template id="auth-template">
+    <v-card tag="form" @submit.prevent="handleLogin" class="auth ma-auto">
+      <v-card-title><h2 class="headline">Login</h2></v-card-title>
+      <v-card-text>
+        <v-text-field
+          v-model="credentials.email"
+          type="email"
+          label="Email"
+          name="email"
+          required
+          autofocus
+        ></v-text-field>
+        <v-text-field
+          v-model="credentials.password"
+          type="password"
+          label="Password"
+          name="password"
+          required
+        ></v-text-field>
+        <v-alert :value="error" type="error">
+          {{ error }}
+        </aside>
+      </v-card-text>
+      <v-card-actions>
+        <v-btn type="submit" color="primary" class="ml-auto" :loading="isLoading">
+          Login
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </template>
+
+  <template id="v-dialog-confirm-template">
+    <v-dialog
+      v-model="isOpen"
+      :max-width="300"
+      @keydown.esc.stop="handleCancel"
+      class="v-dialog-confirm"
+    >
+      <slot slot="activator" name="activator"></slot>
+      <v-card>
+        <v-card-title v-if="title" class="title">{{ title }}</v-card-title>
+        <v-card-text v-if="text">{{ text }}</v-card-text>
+        <v-card-actions>
+          <v-btn flat @click="handleCancel" class="ml-auto">No</v-btn>
+          <v-btn flat color="primary" @click="handleConfirm" ref="confirm">Yes</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+  </template>
+
+  <script src="https://unpkg.com/vue"></script>
+  <script src="https://unpkg.com/vuex"></script>
+  <script src="https://unpkg.com/vuetify@1.3.14"></script>
+  <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+  <script src="https://unpkg.com/tiny-querystring/dist/tiny-querystring.umd.js"></script>
+  <script>
+    const wait = (ms = 1500) => new Promise(resolve => setTimeout(resolve, ms)); // @TODO
+    const { appname = 'default' } = window.tinyQuerystring.parse(window.location.search.substring(1));
+
+    class Auth {
+      constructor() {
+        this.me = undefined;
+
+        this.init();
+      }
+
+      async init() {
+        this.me = JSON.parse(window.localStorage.getItem('me'));
+
+        return this.me;
+      }
+      async login(email, password) {
+        if (email !== 'test@test.com' || password !== 'testing') {
+          throw new Error('Invalid credentials');
+        }
+
+        this.me = {
+          id: +new Date(),
+          email,
+          firstName: 'Testy',
+          lastName: 'Tester',
+          gender: undefined,
+          age: undefined,
+        };
+
+        window.localStorage.setItem('me', JSON.stringify(this.me));
+
+        return this.me;
+      }
+      async logout() {
+        this.me = null;
+
+        window.localStorage.setItem('me', JSON.stringify(this.me));
+
+        return this.me;
+      }
+      async update(updates) {
+        await wait();
+        const data = {
+          ...this.me,
+          ...updates,
+        };
+
+        this.me = data;
+
+        window.localStorage.setItem('me', JSON.stringify(this.me));
+
+        return this.me;
+      }
+    }
+    const auth = new Auth();
+
+    class Users {
+      constructor() {
+        this.users = [];
+        this.fields = [
+          {
+            name: 'id',
+            readonly: true,
+          },
+          {
+            name: 'email',
+            type: 'email',
+          },
+          {
+            name: 'firstName',
+          },
+          {
+            name: 'lastName',
+          },
+          {
+            name: 'gender',
+          },
+          {
+            name: 'age',
+            type: 'number',
+          },
+        ];
+      }
+
+      get defaults() {
+        return this.fields.reduce((acc, { name }) => ({ ...acc, [name]: undefined }), {});
+      }
+
+      async read() {
+        const { data: { results } } = await axios('https://randomuser.me/api/?results=100');
+        this.users = results.map((result, index) => this.fromRecord({
+          id: index + 1,
+          email: result.email,
+          firstName: result.name.first,
+          lastName: result.name.last,
+          gender: result.gender,
+          age: result.dob.age,
+        }));
+
+        return this.users;
+      }
+      async create(usersToCreate) {
+        await wait();
+        usersToCreate.forEach((user) => {
+          this.users.push(this.fromRecord({
+            ...user,
+            id: this.users.reduce((max, u) => Math.max(u.id + 1, max), 1),
+          }));
+        });
+
+        return this.users;
+      }
+      async update(usersToUpdate, updates) {
+        await wait();
+        usersToUpdate.forEach((user) => {
+          const userToUpdate = this.users.find(u => u.id === user.id);
+          if (userToUpdate) {
+            Object.assign(userToUpdate, updates);
+          }
+        });
+
+        return this.users;
+      }
+      async delete(usersToDelete) {
+        await wait();
+        usersToDelete.forEach((user) => {
+          const index = this.users.indexOf(user);
+          if (index >= 0) {
+            this.users.splice(index, 1);
+          }
+        });
+
+        return this.users;
+      }
+
+      fromRecord(record = {}) {
+        return {
+          ...this.defaults,
+          ...record,
+        };
+      }
+      toRecord(user = {}) {
+        return {
+          ...user,
+        };
+      }
+    }
+    const usersCollection = new Users();
+
+    const store = new Vuex.Store({
+      state: {
+        me: undefined,
+
+        isLoadingUsers: true,
+        users: [],
+        selectedUsers: [],
+        editingUsers: [],
+
+        fields: usersCollection.fields,
+      },
+      mutations: {
+        setMe(state, me) {
+          if (me && me.id) {
+            state.me = me;
+          } else {
+            state.me = null;
+          }
+        },
+
+        loadingUsers(state, loading = true) {
+          state.isLoadingUsers = loading;
+        },
+        setUsers(state, users = []) {
+          state.users = users;
+        },
+        selectUsers(state, users = true) {
+          state.selectedUsers = users;
+        },
+        editUsers(state, users = []) {
+          state.editingUsers = users;
+        },
+      },
+    });
+
+    const app = new Vue({
+      store,
+      el: '#app',
+      template: '#app-template',
+      computed: {
+        me() {
+          return this.$store.state.me;
+        },
+      },
+      methods: {
+        async logout() {
+          this.$store.commit('setMe', await auth.logout());
+        },
+
+        handleMyAccount() {
+          this.$store.commit('editUsers', [usersCollection.fromRecord(this.me)]);
+        },
+      },
+      watch: {
+        async me(me) {
+          this.$store.commit('loadingUsers');
+
+          if (me) {
+            try {
+              this.$store.commit('setUsers', await usersCollection.read());
+            } finally {
+              this.$store.commit('loadingUsers', false);
+            }
+          }
+        },
+      },
+      async created() {
+        this.$store.commit('setMe', await auth.init());
+      },
+      components: {
+        UserList: {
+          template: '#user-list-template',
+          data() {
+            return {
+              search: undefined,
+              confirmDelete: false,
+              isDeleting: false,
+            };
+          },
+          computed: {
+            fields() {
+              return this.$store.state.fields;
+            },
+            headers() {
+              return this.fields.map(field => ({
+                text: field.label || field.name,
+                value: field.name,
+              }));
+            },
+            isLoadingUsers() {
+              return this.$store.state.isLoadingUsers;
+            },
+            users() {
+              return this.$store.state.users;
+            },
+            selected: {
+              get() {
+                return this.$store.state.selectedUsers;
+              },
+              set(selected) {
+                this.$store.commit('selectUsers', selected);
+              },
+            },
+            count() {
+              return this.selected.length;
+            },
+          },
+          methods: {
+            handleAdd() {
+              this.handleEdit([{}]);
+            },
+            handleEdit(usersToEdit) {
+              this.$store.commit('editUsers', usersToEdit);
+            },
+            async handleDelete(usersToDelete) {
+              this.isDeleting = true;
+
+              try {
+                this.$store.commit('setUsers', await usersCollection.delete(usersToDelete));
+
+                // unselect all users since we just deleted any that were selected
+                this.$store.commit('selectUsers', []);
+              } finally {
+                this.isDeleting = false;
+              }
+            },
+          },
+        },
+        UserItem: {
+          template: '#user-item-template',
+          data() {
+            return {
+              isSaving: false,
+              confirmDelete: false,
+              isDeleting: false,
+            };
+          },
+          computed: {
+            fields() {
+              return this.$store.state.fields;
+            },
+            users() {
+              return this.$store.state.editingUsers;
+            },
+            count() {
+              return this.users.length;
+            },
+            data() {
+              // only populate shared values
+              return this.users.reduce((acc, user) => {
+                Object.entries(user).forEach(([k, v]) => {
+                  if (acc[k] !== v) acc[k] = undefined;
+                });
+                return acc;
+              }, { ...this.users[0] });
+            },
+            updates() {
+              // pluck out only data that was explicitly changed/set
+              return Object.entries(this.data).reduce((acc, [k, v]) => {
+                if (v !== undefined) {
+                  acc[k] = v;
+                }
+                return acc;
+              }, {});
+            },
+            isAdding() {
+              return this.users.some(u => !u.id);
+            },
+            isBatch() {
+              return this.count > 1;
+            },
+            isOpen: {
+              get() {
+                return !!this.count;
+              },
+              set(v) {
+                if (!v) {
+                  this.$store.commit('editUsers');
+                }
+              },
+            },
+          },
+          watch: {
+            async isOpen(isOpen) {
+              if (isOpen) {
+                document.body.addEventListener('keydown', this.escHandler);
+
+                await this.$nextTick();
+                this.$el.querySelector('input:not([readonly]):not([disabled])').focus();
+              } else {
+                document.body.removeEventListener('keydown', this.escHandler);
+              }
+            },
+          },
+          methods: {
+            escHandler(event) {
+              if (event.keyCode === 27 /* esc */ && !this.confirmDelete) {
+                this.isOpen = false;
+              }
+            },
+
+            async handleSave() {
+              this.isSaving = true;
+
+              // @TODO: validate form
+
+              try {
+                if (this.isAdding) {
+                  this.$store.commit('setUsers', await usersCollection.create([this.updates]));
+                } else {
+                  if (this.data.id === this.$store.state.me.id) {
+                    this.$store.commit('setMe', await auth.update(this.updates));
+                  } else {
+                    this.$store.commit('setUsers', await usersCollection.update(this.users, this.updates));
+                  }
+                }
+
+                // leave selected so it's clear which records changed, and they can be edited again if desired
+              } finally {
+                this.isSaving = false;
+                this.isOpen = false;
+              }
+            },
+            async handleDelete(usersToDelete) {
+              this.isDeleting = true;
+
+              try {
+                this.$store.commit('setUsers', await usersCollection.delete(usersToDelete));
+
+                // unselected deleted users
+                const selected = this.$store.state.selectedUsers.filter(u => !usersToDelete.find(d => d.id === u.id));
+                this.$store.commit('selectUsers', selected);
+              } finally {
+                this.isDeleting = false;
+                this.isOpen = false;
+              }
+            },
+          },
+        },
+        Auth: {
+          template: '#auth-template',
+          data() {
+            return {
+              isLoading: false,
+              credentials: {
+                email: undefined,
+                password: undefined,
+              },
+              error: undefined,
+            };
+          },
+          methods: {
+            async handleLogin() {
+              this.error = null;
+              this.isLoading = true;
+
+              try {
+                const { email, password } = this.credentials;
+                this.$store.commit('setMe', await auth.login(email, password));
+              } catch (err) {
+                if (err && err.message) {
+                  this.error = err.message;
+                }
+                throw err;
+              } finally {
+                this.isLoading = false;
+              }
+            },
+          },
+        },
+      },
+    });
+
+  Vue.component('v-dialog-confirm', {
+    template: '#v-dialog-confirm-template',
+    props: {
+      value: true,
+      title: String,
+      text: String,
+    },
+    computed: {
+      isOpen: {
+        get() {
+          return this.value;
+        },
+        set(v) {
+          this.$emit('input', v);
+        },
+      },
+    },
+    watch: {
+      async isOpen(isOpen) {
+        if (isOpen) {
+          await this.$nextTick();
+          this.$refs.confirm.$el.focus();
+        }
+      },
+    },
+    methods: {
+      handleCancel() {
+        this.isOpen = false;
+        this.$emit('cancel');
+      },
+      handleConfirm() {
+        this.isOpen = false;
+        this.$emit('confirm');
+      },
+    }
+  });
+  </script>
+</body>
+</html>
